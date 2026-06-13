@@ -1,0 +1,11 @@
+.godot/
+out/
+godot
+*.tmp
+verify/
+playbooks/
+models/*.glb
+models/*.hdr
+models/*.png
+audio/*.wav
+*.import
