@@ -28,23 +28,6 @@ noise = lowpass(noise, 0.55)
 thump = [0.7 * math.sin(2 * math.pi * (110 - 60 * i / n) * i / SR) * env(i, n, 0.001, 18) for i in range(n)]
 write_wav("shot_rifle", [0.9 * a + b for a, b in zip(noise, thump)])
 
-# pistol: deeper, slower thump
-n = int(SR * 0.18)
-noise = lowpass([random.uniform(-1, 1) * env(i, n, 0.001, 20) for i in range(n)], 0.35)
-thump = [0.9 * math.sin(2 * math.pi * (90 - 40 * i / n) * i / SR) * env(i, n, 0.001, 12) for i in range(n)]
-write_wav("shot_pistol", [0.8 * a + b for a, b in zip(noise, thump)])
-
-# plasma: descending sweep + shimmer
-n = int(SR * 0.22)
-out = []
-for i in range(n):
-    t = i / SR
-    f = 1400 * math.exp(-7 * t) + 220
-    s = 0.6 * math.sin(2 * math.pi * f * t) + 0.25 * math.sin(2 * math.pi * f * 2.7 * t)
-    s += 0.15 * random.uniform(-1, 1)
-    out.append(s * env(i, n, 0.002, 14))
-write_wav("shot_plasma", out)
-
 # reload: click-clack
 n = int(SR * 0.45)
 out = [0.0] * n

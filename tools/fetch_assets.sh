@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Fetches the CC0 binary assets (characters, weapons, sky, texture) and generates
-# the procedural SFX. Run once from the repo root before importing/exporting.
+# Fetch the CC0 binary assets (characters, weapons, sky, ground textures) and
+# generate the procedural SFX. Run once from the repo root before import/export.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE=https://preview.myapping.com/godot-assets
-mkdir -p models audio
+TEX=https://preview.myapping.com/godot-textures
+mkdir -p models skies textures audio
 
-for c in soldier vanguard specter warden cyber alien infected reaver; do
-  [ -s "models/$c.glb" ] || curl -sfL "$BASE/realistic_characters/$c.glb" -o "models/$c.glb"
+# Characters: hero soldier + 4 enemy types
+for c in soldier infected alien cyber reaver; do
+	[ -s "models/$c.glb" ] || curl -sfL "$BASE/realistic_characters/$c.glb" -o "models/$c.glb"
 done
-for w in rifle pistol plasma armcannon; do
-  [ -s "models/$w.glb" ] || curl -sfL "$BASE/realistic_weapons/$w.glb" -o "models/$w.glb"
+# Weapons: hero rifle + enforcer arm-cannon
+for w in rifle armcannon; do
+	[ -s "models/$w.glb" ] || curl -sfL "$BASE/realistic_weapons/$w.glb" -o "models/$w.glb"
 done
-[ -s models/sky_industrial_sunset.hdr ] || curl -sfL "$BASE/skies/ph_industrial_sunset_puresky.hdr" -o models/sky_industrial_sunset.hdr
-[ -s models/metal_panel.png ] || curl -sfL "https://preview.myapping.com/godot-textures/metal_panel.png" -o models/metal_panel.png
+# Cold blue panorama sky (LDR PNG -> PanoramaSkyMaterial)
+[ -s skies/sb_cloudy_4.png ] || curl -sfL "$BASE/skies/sb_cloudy_4.png" -o skies/sb_cloudy_4.png
+# Ground / structure textures
+[ -s textures/snow.png ]        || curl -sfL "$TEX/snow.png" -o textures/snow.png
+[ -s textures/metal_panel.png ] || curl -sfL "$TEX/metal_panel.png" -o textures/metal_panel.png
 
+# Procedural SFX
 python3 tools/gen_audio.py
+
 echo "assets ready"
