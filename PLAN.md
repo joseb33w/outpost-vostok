@@ -1,24 +1,47 @@
 # Goal
-Build **Outpost Vostok** — a wave-survival sci-fi shooter (Godot 4.6.3, single-threaded WebGL2/Compatibility web export) that runs in mobile + desktop browsers. The player is a spec-ops soldier defending a frozen alien outpost against escalating waves of melee + ranged enemies. Third-person, fully playable with touch (floating joystick + fire/reload buttons + drag-to-orbit camera) and keyboard/mouse (WASD + Space/LMB + R).
+
+Fix two input/animation bugs in Outpost Vostok (no model changes):
+
+1. **Auto-fire:** the soldier fired just from holding the mouse to look or moving on
+   mobile, because the `fire` action was bound to the left mouse button and
+   `emulate_mouse_from_touch=true` turned every touch into a click.
+2. **Frozen legs:** downstream of bug 1 — while "firing", the rig froze the
+   AnimationPlayer in the ADS pose and the player skipped walk/run, so the soldier slid
+   with frozen legs.
+
+Plus a new feature: **blend a lower-body walk/run UNDER the upper-body aim pose** so the
+legs keep stepping while shooting on the move, with the arm/weapon IK aim intact.
 
 # Files to touch
-- `project.godot` — Compatibility renderer (mobile+web), canvas_items/expand stretch, touch-mouse emulation, input map (move/fire/reload/dodge), MSAA 2x.
-- `export_presets.cfg` — `Web` preset, `thread_support=false` (nothreads), mobile `head_include` (viewport-fit=cover meta, full-screen CSS, touch-action:none).
-- `meshy_character_rig.gd` — vendored MeshyCharacterRig component (drives realistic chars: ADS aim, recoil fire w/ flash+tracer, reload).
-- `scripts/main.gd` — Main orchestrator: builds the lit environment (LDR panorama cold blue sky, snow ground, perimeter wall, cover, beacon, floodlights, fog), follow-camera, wave system, score, routing, game-state.
-- `scripts/player.gd` — CharacterBody3D: camera-relative movement, auto-aim facing, hitscan fire w/ impact FX, health, damage flash + screen shake.
-- `scripts/enemy.gd` — CharacterBody3D: chase AI, melee + ranged (cyber/armcannon) attacks, hit-flash, death.
-- `scripts/hud.gd` — CanvasLayer UI: HP bar, wave/score/kills, floating joystick, fire/reload/dodge buttons, drag-look, tap-to-deploy start overlay (audio unlock), game-over overlay. Responsive relayout (portrait+landscape).
-- `scripts/{config,audio,leaderboard}.gd` — tuning data, procedural SFX playback, public Supabase leaderboard via HTTPRequest.
-- `tools/gen_audio.py` — procedurally generated arcade SFX (shot/hit/hurt/wave/gameover/...).
-- CC0 assets fetched via `tools/fetch_assets.sh` (soldier/infected/alien/cyber/reaver + rifle/armcannon, sb_cloudy_4 sky, snow/metal textures).
+
+- `project.godot` — remove the `InputEventMouseButton` from the `fire` action (keep Space);
+  set `input_devices/pointing/emulate_mouse_from_touch=false`.
+- `meshy_character_rig.gd` — drive the AnimationMixer in MANUAL mode and `advance()` it in
+  `_process` so procedural arm IK runs AFTER the clip poses the skeleton; add a layered
+  base/overlay model (`set_locomotion` / `set_aiming` / `_refresh_base`) so a walk/run clip
+  plays under the aim IK.
+- `scripts/player.gd` — `_update_anim` always feeds the rig the lower-body locomotion state
+  (so legs step while moving, including while firing).
+- `scripts/hud.gd` — because `emulate_mouse_from_touch=false` stops native Buttons from
+  pressing on touch, route menu/game-over taps (DEPLOY / SUBMIT / REDEPLOY / callsign field)
+  to the buttons via explicit touch hit-testing so the game stays startable on a phone.
+- `README.md` — controls: desktop Fire = Space / FIRE button (not Left Mouse).
+- `tests/selftest.gd` — assert the fire binding has no mouse button + emulation off, and that
+  legs animate when moving (no fire) and keep stepping while moving + firing (aim intact).
+- `tools/gen_textures.py` (new) + `tools/fetch_assets.sh` — the flat texture CDN URLs went
+  dead; generate seamless snow/metal textures locally so the build is self-contained.
 
 # Verification approach
-- Headless logic self-test (`tests/selftest.gd`, no GPU): clip resolution, facing (W=back / S=face, no +Z moonwalk), enemy AI chase + melee damage, combat fire delta + juice particles, kill scoring.
-- Headless smoke verify via the vetted `verify.mjs` (engine boots, canvas, clean console, frames) + screenshot critique vs the committed cold sci-fi art style; mobile fill at portrait + landscape.
-- Backend: the public leaderboard table already exists — verified anon SELECT (200) + INSERT (201) via REST.
+
+- Headless logic self-test (`godot --headless -s tests/selftest.gd`): input bindings, leg
+  bone-pose deltas (walk-no-fire and walk-while-firing), aim overlay active, plus the existing
+  facing / combat / AI / scoring checks.
+- Web `nothreads` export + headless smoke verifier (engine boots, canvas, clean console,
+  screenshots) on the software-GL sandbox.
+- Deploy the web build to the preview origin for the play link.
 
 # Out of scope
-- Multiplayer (single-player survival).
-- Per-account cloud saves (anon auth disabled on the shared project; the leaderboard is a genuinely-public arcade table + a localStorage personal best).
-- Real-device audio/GPU/touch-feel, which the sandbox structurally cannot exercise (documented in the PR).
+
+- Character/weapon meshes (explicitly untouched).
+- The Supabase leaderboard backend (already exists; unchanged).
+- Gameplay tuning (damage, waves, speeds).

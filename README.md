@@ -29,10 +29,13 @@ Third-person, auto-aim gunplay tuned for touch first.
 | Action | Desktop | Phone |
 |---|---|---|
 | Move | WASD / arrows | left virtual stick (floating) |
-| Fire | Left Mouse / Space | FIRE button (hold) |
+| Fire | Space (hold) / FIRE button | FIRE button (hold) |
 | Reload | R | RLD button |
 | Dodge roll | Shift | DASH button |
 | Orbit camera | drag right side (mouse) | drag right side of screen |
+
+> Firing is **only** Space or the FIRE button — the left mouse button orbits the camera (drag the
+> right side of the screen) and never fires, so holding the mouse to look around won't shoot.
 
 Tap **DEPLOY** to start (the first tap also unlocks audio on mobile).
 
@@ -53,13 +56,14 @@ Tap **DEPLOY** to start (the first tap also unlocks audio on mobile).
 Binary assets (CC0 models, sky, textures) and the generated SFX are **not** committed — fetch them first:
 
 ```sh
-bash tools/fetch_assets.sh                 # CC0 .glb/.png + generated SFX wavs
+bash tools/fetch_assets.sh                 # CC0 .glb/.png + generated SFX wavs (snow/metal textures
+                                           # fall back to tools/gen_textures.py if the CDN is down)
 godot --headless --path . --import
 godot --headless --path . --export-release "Web" out/index.html
 # serve out/ from any static host (no special headers needed)
 ```
 
-Run the headless logic self-test (facing, combat, AI, scoring — no GPU required):
+Run the headless logic self-test (input bindings, facing, combat, AI, leg animation — no GPU required):
 
 ```sh
 godot --headless -s tests/selftest.gd
