@@ -120,16 +120,22 @@ func _update_anim(firing: bool) -> void:
 		return
 	if _dodging:
 		return
-	if reloading or _burst_active:
-		return  # rig is driving reload/fire ADS pose
 	var planar := Vector2(velocity.x, velocity.z).length()
-	var clip := "idle"
+	var loco := "idle"
 	if planar > 4.2:
-		clip = "run"
+		loco = "run"
 	elif planar > 0.5:
-		clip = "walk"
-	if rig.current_clip != clip:
-		rig.play(clip)
+		loco = "walk"
+	# Always feed the lower body so the legs keep stepping — even while the upper body
+	# holds the aim/fire/reload pose (walk/run blends UNDER the IK aim).
+	rig.set_locomotion(loco)
+	if reloading or firing or _burst_active:
+		rig.set_aiming(true)   # hold ADS; legs follow set_locomotion above
+		return
+	if rig.aiming:
+		rig.set_aiming(false)
+	if rig.current_clip != loco:
+		rig.play(loco)
 
 func _burst() -> void:
 	_burst_active = true

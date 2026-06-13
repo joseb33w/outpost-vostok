@@ -74,10 +74,17 @@ var weapon_bone := -1
 var weapon_forearm_bone := -1
 var weapon_head_bone := -1
 var weapon_recoil := 0.0             # 0..1, kicked to 1 per shot, decays each frame
-var aiming := false                  # aim/fire/reload → freeze body + IK both hands on the weapon
+var aiming := false                  # aim/fire/reload → IK both hands on the weapon (upper-body overlay)
 var reload_t := -1.0                 # >=0 while a reload plays (seconds elapsed)
 var reload_mag: Node3D = null
-var current_clip := "idle"
+var current_clip := "idle"           # last game intent (idle/walk/run/fire/aim/reload/dodge/...)
+var _locomotion := "idle"            # lower-body state (idle/walk/run) used UNDER the aim overlay
+var _base_clip := ""                 # clip currently driving the AnimationPlayer (legs/torso)
+var _frozen := false                 # base is held at a fixed frame (braced standing ADS pose)
+var _fx_busy := false                # a muzzle-flash burst is in flight (prevents fx stacking)
+
+const _LOOP_CLIPS := ["idle", "walk", "run", "crouch", "walk_back"]
+const _COMBAT_CLIPS := ["fire", "aim", "reload"]
 
 func _ensure_holder() -> void:
 	if _holder == null:
@@ -92,11 +99,18 @@ func setup(character: Node3D, weapon: Node3D = null, cfg: Dictionary = {}, p_fac
 	current_weapon = null; muzzle = null; reload_mag = null
 	weapon_bone = -1; weapon_forearm_bone = -1; weapon_head_bone = -1
 	weapon_recoil = 0.0; reload_t = -1.0; aiming = false
+	_locomotion = "idle"; _base_clip = ""; _frozen = false; _fx_busy = false
 	facing_deg = p_facing_deg
 	character.rotation_degrees.y = facing_deg
 	_holder.add_child(character)
 	current_anim = _find(character, "AnimationPlayer") as AnimationPlayer
 	current_skel = _find(character, "Skeleton3D") as Skeleton3D
+	# Drive the mixer manually so procedural arm IK can run AFTER the clip poses the
+	# skeleton each frame (a child AnimationPlayer otherwise re-applies its pose AFTER
+	# our _process and clobbers the IK). This is what lets a lower-body walk/run clip
+	# play UNDER the upper-body aim pose without fighting the IK.
+	if current_anim != null:
+		current_anim.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	weapon_cfg = cfg
 	tracer_color = _color(cfg.get("tracer", [1, 0.85, 0.4]))
 	if weapon != null and not cfg.is_empty() and current_skel != null:
@@ -105,51 +119,131 @@ func setup(character: Node3D, weapon: Node3D = null, cfg: Dictionary = {}, p_fac
 		weapon.queue_free()
 	play("idle")
 
-# ── public clip API ───────────────────────────────────────────────────────────
-func aim() -> void:
-	play("aim")
-
+# ── public clip API ────────────────────────────────────────────────────────────
+## Full-body clip (idle/walk/run/dodge/jump/hit/death/victory/crouch/walk_back).
+## Turns the aim overlay OFF — use fire()/aim()/reload() (or set_aiming) for ADS.
 func play(clip: String) -> void:
 	current_clip = clip
-	# aim/fire/reload use the braced both-hands-on-the-weapon pose: freeze the clip's
-	# own body for legs/torso, then drive the arms + weapon by IK each frame.
-	aiming = (clip == "aim" or clip == "fire" or clip == "reload") and current_weapon != null
-	if not aiming and _holder != null:
+	if clip == "idle" or clip == "walk" or clip == "run":
+		_locomotion = clip
+	aiming = false
+	if _holder != null:
 		_holder.rotation.y = 0.0
-	if clip != "reload" and reload_t >= 0.0:
+	if reload_t >= 0.0:
 		reload_t = -1.0
 		if is_instance_valid(reload_mag): reload_mag.queue_free()
 		reload_mag = null
-	if current_anim == null:
+	_refresh_base()
+
+func aim() -> void:
+	current_clip = "aim"
+	aiming = current_weapon != null
+	_refresh_base()
+
+## Lower-body locomotion state (idle/walk/run). Call EVERY frame from the game so the
+## legs keep stepping even while the upper body holds an aim/fire/reload pose.
+func set_locomotion(clip: String) -> void:
+	if clip == _locomotion:
 		return
-	var list := current_anim.get_animation_list()
-	if list.has(clip):
-		var a := current_anim.get_animation(clip)
-		a.loop_mode = Animation.LOOP_LINEAR if clip in ["idle","walk","run","crouch","walk_back"] else Animation.LOOP_NONE
-		current_anim.play(clip)
-		if aiming:
-			current_anim.seek(a.length * 0.5, true)
-			current_anim.pause()
+	_locomotion = clip
+	if aiming:
+		_refresh_base()
+
+## Toggle the upper-body aim overlay (ADS hold). Legs follow set_locomotion().
+func set_aiming(on: bool) -> void:
+	on = on and current_weapon != null
+	if on == aiming:
+		return
+	aiming = on
+	if not on and _holder != null:
+		_holder.rotation.y = 0.0
+	_refresh_base()
 
 func fire() -> void:
-	play("fire")
+	current_clip = "fire"
+	aiming = current_weapon != null
+	_refresh_base()
+	if _fx_busy:
+		weapon_recoil = 1.0
+		return
+	_fx_busy = true
 	for i in 6:
-		await get_tree().create_timer(0.1).timeout
-		if muzzle == null or current_clip != "fire":
-			return
+		if muzzle == null or not aiming:
+			break
 		weapon_recoil = 1.0
 		_muzzle_flash()
 		_tracer()
+		await get_tree().create_timer(0.1).timeout
+		if not is_inside_tree():
+			break
+	_fx_busy = false
 
 func reload() -> void:
-	play("reload")
+	current_clip = "reload"
+	aiming = current_weapon != null
+	if not aiming and _holder != null:
+		_holder.rotation.y = 0.0
 	reload_t = 0.0
 	_spawn_mag()
+	_refresh_base()
 
-# ── per-frame drive ──────────────────────────────────────────────────────────
+# ── base-layer selection: legs/torso clip under the aim overlay ─────────────────────
+func _refresh_base() -> void:
+	if current_anim == null:
+		return
+	var want := current_clip
+	var freeze := false
+	if aiming:
+		if _locomotion == "walk" or _locomotion == "run":
+			want = _locomotion          # lower-body walk/run steps under the aim pose
+		else:
+			# braced standing ADS: hold a combat pose for the torso/legs; IK drives arms
+			want = current_clip if current_clip in _COMBAT_CLIPS else "fire"
+			freeze = true
+	elif current_clip in _COMBAT_CLIPS:
+		want = _locomotion              # left a combat state but not aiming → locomotion
+	_play_base(want, freeze)
+
+func _play_base(clip: String, freeze: bool) -> void:
+	if current_anim == null:
+		return
+	clip = _resolve_clip(clip)
+	if clip == "":
+		return
+	if clip == _base_clip and freeze == _frozen:
+		return                          # already in this state; advance() keeps it going
+	_base_clip = clip
+	_frozen = freeze
+	var a := current_anim.get_animation(clip)
+	a.loop_mode = Animation.LOOP_LINEAR if clip in _LOOP_CLIPS else Animation.LOOP_NONE
+	current_anim.play(clip)
+	if freeze:
+		current_anim.seek(a.length * 0.5, true)
+
+func _resolve_clip(clip: String) -> String:
+	if current_anim == null:
+		return ""
+	var list := current_anim.get_animation_list()
+	if list.has(clip):
+		return clip
+	if clip == "run" and list.has("walk"):
+		return "walk"
+	if (clip == "walk" or clip == "run") and list.has("idle"):
+		return "idle"
+	if (clip == "aim" or clip == "reload") and list.has("fire"):
+		return "fire"
+	if _base_clip != "":
+		return _base_clip               # unknown clip → keep whatever is already playing
+	return "idle" if list.has("idle") else ""
+
+# ── per-frame drive ────────────────────────────────────────────────────────
 func _process(delta: float) -> void:
 	if current_skel == null:
 		return
+	# Tick the base clip first (legs/torso). When frozen (braced standing ADS) we hold
+	# the seeked frame and don't advance. The arm IK below then overrides the upper body.
+	if current_anim != null and not _frozen:
+		current_anim.advance(delta)
 	weapon_recoil = move_toward(weapon_recoil, 0.0, delta * 8.0)
 	if reload_t >= 0.0:
 		reload_t += delta
@@ -158,12 +252,12 @@ func _process(delta: float) -> void:
 			if is_instance_valid(reload_mag): reload_mag.queue_free()
 			reload_mag = null
 	if aiming:
-		_apply_aim_ik()           # body is paused (frozen) so this isn't overwritten
+		_apply_aim_ik()           # runs AFTER advance() so it wins over the base clip
 	_update_weapon_mount()
 	if reload_t >= 0.0:
 		_update_reload_mag()
 
-# ── weapon attach ────────────────────────────────────────────────────────────
+# ── weapon attach ────────────────────────────────────────────────────────
 func _attach_weapon(winst: Node3D, cfg: Dictionary) -> void:
 	for b in current_skel.get_bone_count():
 		var bn := current_skel.get_bone_name(b)
@@ -190,7 +284,7 @@ func _attach_weapon(winst: Node3D, cfg: Dictionary) -> void:
 	winst.add_child(muzzle)
 	_update_weapon_mount()
 
-# ── aim-down-sights: head-anchored frame + two-bone arm IK ───────────────────────
+# ── aim-down-sights: head-anchored frame + two-bone arm IK ────────────────────
 func _bidx(want: String, excl: Array) -> int:
 	for b in current_skel.get_bone_count():
 		var bn := current_skel.get_bone_name(b)
@@ -388,7 +482,7 @@ func _update_weapon_mount() -> void:
 		woff = Vector3(-woff.x, woff.y, woff.z)
 	current_weapon.global_transform = Transform3D(mbasis, hand.origin) * rec * Transform3D(lb, woff * weapon_scale)
 
-# ── fx ────────────────────────────────────────────────────────────────────
+# ── fx ────────────────────────────────────────────────────────────────
 func _spawn_mag() -> void:
 	if is_instance_valid(reload_mag):
 		reload_mag.queue_free()
@@ -461,7 +555,7 @@ func _tracer() -> void:
 	, 0.0, 1.0, 0.5)
 	tw.tween_callback(func(): if is_instance_valid(t): t.queue_free())
 
-# ── helpers ────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────
 func _find(node: Node, klass: String) -> Node:
 	if node.is_class(klass):
 		return node
