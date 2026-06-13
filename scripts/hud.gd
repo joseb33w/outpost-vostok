@@ -48,6 +48,11 @@ var _over: Control
 var _over_stats: Label
 var _over_board: Label
 var _initials_edit: LineEdit
+# native menu/over buttons — tapped via explicit touch hit-test in _input() because
+# emulate_mouse_from_touch is off (touch no longer auto-presses Control buttons).
+var _deploy_btn: Button
+var _submit_btn: Button
+var _redeploy_btn: Button
 
 func _ready() -> void:
 	layer = 10
@@ -61,7 +66,7 @@ func _process(_dt: float) -> void:
 	if _state == "play":
 		_controls.queue_redraw()
 
-# ── public API ─────────────────────────────────────────
+# ── public API ─────────────────────────────
 func set_health(cur: float, max_hp: float) -> void:
 	var f: float = clampf(cur / max(max_hp, 1.0), 0.0, 1.0)
 	var w: float = _hp_bg.size.x - 4.0
@@ -134,7 +139,7 @@ func update_board(top10: Array) -> void:
 	_over_board.text = _format_board(top10)
 	_menu_board.text = _format_board(top10)
 
-# ── build ──────────────────────────────────────────────
+# ── build ───────────────────────────────
 func _build() -> void:
 	_dmg_flash = ColorRect.new()
 	_dmg_flash.color = Color(0.8, 0, 0.05, 0)
@@ -217,6 +222,7 @@ func _build_menu() -> void:
 	box.add_child(_spacer(10))
 	var deploy := _mk_button("DEPLOY")
 	deploy.pressed.connect(func() -> void: start_pressed.emit())
+	_deploy_btn = deploy
 	var hb := HBoxContainer.new()
 	hb.alignment = BoxContainer.ALIGNMENT_CENTER
 	hb.add_child(deploy)
@@ -254,6 +260,7 @@ func _build_over() -> void:
 	row.add_child(_initials_edit)
 	var submit := _mk_button("SUBMIT")
 	submit.pressed.connect(_on_submit)
+	_submit_btn = submit
 	row.add_child(submit)
 	box.add_child(row)
 	box.add_child(_spacer(6))
@@ -265,6 +272,7 @@ func _build_over() -> void:
 	hb.alignment = BoxContainer.ALIGNMENT_CENTER
 	var again := _mk_button("REDEPLOY")
 	again.pressed.connect(func() -> void: restart_pressed.emit())
+	_redeploy_btn = again
 	hb.add_child(again)
 	box.add_child(hb)
 
@@ -306,7 +314,7 @@ func _format_board(rows: Array) -> String:
 			i += 1
 	return out.strip_edges()
 
-# ── layout ─────────────────────────────────────────────
+# ── layout ──────────────────────────────
 func _refresh_insets() -> void:
 	if not OS.has_feature("web"):
 		return
@@ -341,8 +349,11 @@ func _relayout() -> void:
 	_msg_sub.position = Vector2(vs.x * 0.5 - 200, vs.y * 0.34 + 56)
 	_msg_sub.size = Vector2(400, 30)
 
-# ── input (touch + desktop) ────────────────────────────────────
+# ── input (touch + desktop) ─────────────────────────────
 func _input(event: InputEvent) -> void:
+	if _state == "menu" or _state == "over":
+		_menu_touch(event)
+		return
 	if _state != "play":
 		return
 	if event is InputEventScreenTouch:
@@ -369,6 +380,31 @@ func _input(event: InputEvent) -> void:
 		var mm := event as InputEventMouseMotion
 		if _touches.has(-1):
 			_move(-1, mm.position)
+
+func _menu_touch(event: InputEvent) -> void:
+	# emulate_mouse_from_touch is off, so native Buttons don't press from a tap. Route
+	# screen taps to the visible panel's controls by hit-testing their global rects.
+	# (Desktop mouse still drives the native Buttons, so they aren't handled here.)
+	if not (event is InputEventScreenTouch):
+		return
+	var e := event as InputEventScreenTouch
+	if not e.pressed:
+		return
+	var p := e.position
+	if _state == "menu":
+		if _deploy_btn != null and _deploy_btn.get_global_rect().has_point(p):
+			start_pressed.emit()
+			get_viewport().set_input_as_handled()
+	else:  # over
+		if _initials_edit != null and _initials_edit.get_global_rect().has_point(p):
+			_initials_edit.grab_focus()
+			get_viewport().set_input_as_handled()
+		elif _submit_btn != null and _submit_btn.get_global_rect().has_point(p):
+			_on_submit()
+			get_viewport().set_input_as_handled()
+		elif _redeploy_btn != null and _redeploy_btn.get_global_rect().has_point(p):
+			restart_pressed.emit()
+			get_viewport().set_input_as_handled()
 
 func _press(index: int, pos: Vector2) -> void:
 	var vs := get_viewport().get_visible_rect().size
@@ -444,7 +480,7 @@ func _reload_center(vs: Vector2) -> Vector2:
 	var c := _fire_center(vs)
 	return Vector2(c.x - 130, c.y - 8)
 
-# ── draw touch controls ─────────────────────────────────────
+# ── draw touch controls ─────────────────────────────
 func _draw_controls() -> void:
 	var vs := get_viewport().get_visible_rect().size
 	var font := ThemeDB.fallback_font
