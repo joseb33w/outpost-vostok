@@ -14,8 +14,8 @@ var _next_spawn := 0.0
 
 var camera: Camera3D
 var _cam_yaw := 0.0
-var _cam_pitch := -0.46
-var _cam_dist := 8.5
+var _cam_pitch := -0.42
+var _cam_dist := 7.6
 var _cam_height := 5.0
 var _shake := 0.0
 
@@ -261,20 +261,21 @@ func _build_environment() -> void:
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_sky_contribution = 1.0
-	env.ambient_light_energy = 1.0
+	env.ambient_light_energy = 0.5
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_white = 6.0
+	env.tonemap_white = 1.0
+	env.background_energy_multiplier = 0.42
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.72, 0.80, 0.92)
-	env.fog_density = 0.018
-	env.fog_sky_affect = 0.2
+	env.fog_light_color = Color(0.58, 0.67, 0.82)
+	env.fog_density = 0.045
+	env.fog_sky_affect = 0.7
 	we.environment = env
 	add_child(we)
 
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-42, 38, 0)
-	sun.light_color = Color(0.86, 0.92, 1.0)
-	sun.light_energy = 1.25
+	sun.rotation_degrees = Vector3(-46, 38, 0)
+	sun.light_color = Color(0.82, 0.89, 1.0)
+	sun.light_energy = 1.05
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 70.0
 	add_child(sun)
@@ -303,7 +304,7 @@ func _build_ground() -> void:
 	plane.size = Vector2(120, 120)
 	mi.mesh = plane
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.83, 0.88, 0.95)
+	mat.albedo_color = Color(0.64, 0.71, 0.83)
 	mat.albedo_texture = load("res://textures/snow.png")
 	mat.uv1_triplanar = true
 	mat.uv1_scale = Vector3(0.12, 0.12, 0.12)
@@ -431,32 +432,34 @@ func _build_cover() -> void:
 		body.add_child(col)
 
 func _build_beacon() -> void:
+	# off-centre so it reads as a landmark, never blocking the player at spawn
+	var bp := Vector3(-9.0, 0, -12.5)
 	var mast := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.18
 	cyl.bottom_radius = 0.35
-	cyl.height = 6.0
+	cyl.height = 7.5
 	mast.mesh = cyl
 	var mm := StandardMaterial3D.new()
 	mm.albedo_color = Color(0.2, 0.23, 0.27)
 	mm.metallic = 0.8
 	mm.roughness = 0.4
 	mast.set_surface_override_material(0, mm)
-	mast.position = Vector3(0, 3.0, 0)
+	mast.position = bp + Vector3(0, 3.75, 0)
 	add_child(mast)
 	var orb := MeshInstance3D.new()
 	var sph := SphereMesh.new()
-	sph.radius = 0.55
-	sph.height = 1.1
+	sph.radius = 0.5
+	sph.height = 1.0
 	orb.mesh = sph
 	orb.set_surface_override_material(0, _emissive(Color(0.3, 0.85, 1.0), 5.0))
-	orb.position = Vector3(0, 6.2, 0)
+	orb.position = bp + Vector3(0, 7.7, 0)
 	add_child(orb)
 	_beacon_light = OmniLight3D.new()
 	_beacon_light.light_color = Color(0.4, 0.85, 1.0)
 	_beacon_light.light_energy = 2.4
-	_beacon_light.omni_range = 22.0
-	_beacon_light.position = Vector3(0, 6.2, 0)
+	_beacon_light.omni_range = 24.0
+	_beacon_light.position = bp + Vector3(0, 7.7, 0)
 	add_child(_beacon_light)
 
 func _build_floodlights() -> void:
